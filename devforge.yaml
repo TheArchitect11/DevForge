@@ -1,0 +1,9 @@
+dependencies:
+  - name: node
+    version: "20"
+
+template: https://github.com/ChinmayyK/DevForge.git
+
+linting: false
+gitHooks: false
+envFile: false
