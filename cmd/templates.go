@@ -9,7 +9,7 @@ import (
 	"github.com/chinmay/devforge/internal/registry"
 )
 
-const defaultRegistryURL = "https://registry.devforge.dev/templates.json"
+const defaultRegistryURL = "https://chinmayyk.github.io/devforge-registry/templates.json"
 
 var templatesCmd = &cobra.Command{
 	Use:   "templates",
