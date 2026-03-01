@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 	"github.com/chinmay/devforge/internal/installer"
 	"github.com/chinmay/devforge/internal/logger"
 	"github.com/chinmay/devforge/internal/osdetect"
+	"github.com/chinmay/devforge/internal/remote"
 	"github.com/chinmay/devforge/internal/rollback"
 	"github.com/chinmay/devforge/internal/security"
 	"github.com/chinmay/devforge/internal/semver"
@@ -43,6 +45,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Validate project name for safety.
 	if err := security.ValidateName(projectName); err != nil {
 		return fmt.Errorf("invalid project name: %w", err)
+	}
+
+	// ── Remote execution path ──────────────────────────────────────
+	if remoteHost != "" {
+		return runRemoteInit(projectName)
 	}
 
 	// ── Step 1: Detect OS ──────────────────────────────────────────
@@ -160,6 +167,54 @@ func runInit(cmd *cobra.Command, args []string) error {
 	printSummary(projectName, destDir, cfg, dryRun)
 	log.Info("DevForge init completed successfully")
 
+	return nil
+}
+
+// runRemoteInit delegates the init operation to a remote DevForge agent.
+func runRemoteInit(projectName string) error {
+	log, err := logger.New(verbose, jsonLogs)
+	if err != nil {
+		return fmt.Errorf("logger initialization failed: %w", err)
+	}
+	defer log.Close()
+
+	token := os.Getenv("DEVFORGE_TOKEN")
+	if token == "" {
+		return fmt.Errorf("DEVFORGE_TOKEN environment variable is required for remote execution")
+	}
+
+	client := remote.NewClient(remoteHost, token, log, false)
+
+	req := remote.Request{
+		Command:     "init",
+		ProjectName: projectName,
+		Version:     Version,
+		DryRun:      dryRun,
+	}
+
+	fmt.Printf("⟳ Sending remote init request to %s...\n", remoteHost)
+	resp, err := client.Execute(req)
+	if err != nil {
+		return fmt.Errorf("remote execution failed: %w", err)
+	}
+
+	// Display streaming logs.
+	fmt.Println()
+	fmt.Println("  Remote Execution Logs")
+	fmt.Println("  ═════════════════════")
+	client.PrintLogs(resp)
+
+	fmt.Println()
+	if resp.Success {
+		fmt.Printf("  ✅ Remote init completed (request: %s, duration: %s)\n", resp.RequestID, resp.Duration)
+	} else {
+		fmt.Printf("  ❌ Remote init failed: %s\n", resp.Error)
+	}
+	fmt.Println()
+
+	if !resp.Success {
+		return fmt.Errorf("remote execution failed: %s", resp.Error)
+	}
 	return nil
 }
 

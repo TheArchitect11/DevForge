@@ -13,10 +13,11 @@ var Version = "dev"
 
 // Flag variables shared across commands.
 var (
-	cfgFile  string
-	dryRun   bool
-	verbose  bool
-	jsonLogs bool
+	cfgFile    string
+	dryRun     bool
+	verbose    bool
+	jsonLogs   bool
+	remoteHost string
 )
 
 // rootCmd is the base command for the DevForge CLI.
@@ -57,4 +58,5 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "simulate all operations without making changes")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable debug-level logging output")
 	rootCmd.PersistentFlags().BoolVar(&jsonLogs, "json-logs", false, "output logs in structured JSON format")
+	rootCmd.PersistentFlags().StringVar(&remoteHost, "remote", "", "remote DevForge agent URL (e.g. https://host:8443)")
 }

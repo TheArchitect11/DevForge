@@ -26,21 +26,27 @@ jobs:
         run: go vet ./...
 
   build:
-    name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    name: Build ${{ matrix.binary }} ${{ matrix.os }}/${{ matrix.arch }}
     needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        binary: [cli, agent, server]
         include:
-          - os: darwin
-            arch: amd64
-          - os: darwin
-            arch: arm64
-          - os: linux
-            arch: amd64
+          - binary: cli
+            path: "."
+            output: devforge
+          - binary: agent
+            path: "./cmd/agent"
+            output: devforge-agent
+          - binary: server
+            path: "./cmd/server"
+            output: devforge-server
+        os: [darwin, linux, windows]
+        arch: [amd64, arm64]
+        exclude:
           - os: windows
-            arch: amd64
-            ext: .exe
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -54,15 +60,18 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          EXT=""
+          if [ "${{ matrix.os }}" = "windows" ]; then EXT=".exe"; fi
           go build -trimpath \
             -ldflags "-s -w -X main.version=${VERSION}" \
-            -o devforge-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }} .
+            -o ${{ matrix.output }}-${{ matrix.os }}-${{ matrix.arch }}${EXT} \
+            ${{ matrix.path }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: devforge-${{ matrix.os }}-${{ matrix.arch }}
-          path: devforge-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          name: ${{ matrix.output }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ matrix.output }}-*
 
   release:
     name: Create Release
