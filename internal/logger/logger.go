@@ -1,5 +1,6 @@
 // Package logger provides structured logging for DevForge using logrus.
-// It supports console and file output, with configurable verbosity levels.
+// It supports console and file output, with configurable verbosity levels
+// and optional JSON formatting.
 package logger
 
 import (
@@ -24,7 +25,6 @@ type Logger struct {
 func logDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		// Fallback to /tmp if home directory cannot be determined.
 		return filepath.Join(os.TempDir(), ".devforge", "logs")
 	}
 	return filepath.Join(home, ".devforge", "logs")
@@ -36,10 +36,12 @@ func logFilePath() string {
 }
 
 // New creates a new Logger instance. If verbose is true, the log level is
-// set to Debug; otherwise it defaults to Info. Logs are written to both
-// stderr (for user visibility) and a persistent log file at
-// ~/.devforge/logs/devforge.log.
-func New(verbose bool) (*Logger, error) {
+// set to Debug; otherwise it defaults to Info. If jsonLogs is true, output
+// is formatted as structured JSON. Logs are written to both stderr and a
+// persistent log file at ~/.devforge/logs/devforge.log.
+func New(verbose bool, jsonLogs ...bool) (*Logger, error) {
+	useJSON := len(jsonLogs) > 0 && jsonLogs[0]
+
 	dir := logDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create log directory %s: %w", dir, err)
@@ -52,11 +54,25 @@ func New(verbose bool) (*Logger, error) {
 	}
 
 	log := logrus.New()
-	log.SetFormatter(&logrus.TextFormatter{
-		FullTimestamp:   true,
-		TimestampFormat: "2006-01-02 15:04:05",
-		DisableColors:   false,
-	})
+
+	// Set console formatter based on JSON flag.
+	if useJSON {
+		log.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+			FieldMap: logrus.FieldMap{
+				logrus.FieldKeyTime:  "timestamp",
+				logrus.FieldKeyLevel: "level",
+				logrus.FieldKeyMsg:   "message",
+			},
+		})
+	} else {
+		log.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
+			DisableColors:   false,
+		})
+	}
+
 	log.SetOutput(os.Stderr)
 
 	if verbose {
@@ -65,13 +81,11 @@ func New(verbose bool) (*Logger, error) {
 		log.SetLevel(logrus.InfoLevel)
 	}
 
-	// Add a hook so that every log entry is also written to the log file.
+	// File hook always writes in JSON format for structured log analysis.
 	log.AddHook(&fileHook{
 		file: file,
-		formatter: &logrus.TextFormatter{
-			FullTimestamp:   true,
-			TimestampFormat: "2006-01-02 15:04:05",
-			DisableColors:   true,
+		formatter: &logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
 		},
 	})
 

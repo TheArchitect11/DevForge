@@ -1,9 +1,13 @@
 dependencies:
   - name: node
+    version: "18"
   - name: git
+    version: "latest"
   - name: docker
+    version: "latest"
 
 template: "https://github.com/some-org/node-template"
+registryUrl: "https://registry.devforge.dev/templates.json"
 
 linting: true
 gitHooks: true

@@ -13,6 +13,8 @@ import (
 	"github.com/chinmay/devforge/internal/logger"
 	"github.com/chinmay/devforge/internal/osdetect"
 	"github.com/chinmay/devforge/internal/rollback"
+	"github.com/chinmay/devforge/internal/security"
+	"github.com/chinmay/devforge/internal/semver"
 	"github.com/chinmay/devforge/internal/template"
 )
 
@@ -22,7 +24,7 @@ var initCmd = &cobra.Command{
 	Long: `Initialize a new project by:
   1. Detecting your OS
   2. Loading configuration
-  3. Installing required dependencies
+  3. Installing required dependencies (with version pinning)
   4. Cloning the starter template
   5. Generating environment configuration
 
@@ -38,12 +40,17 @@ func init() {
 func runInit(cmd *cobra.Command, args []string) error {
 	projectName := args[0]
 
+	// Validate project name for safety.
+	if err := security.ValidateName(projectName); err != nil {
+		return fmt.Errorf("invalid project name: %w", err)
+	}
+
 	// ── Step 1: Detect OS ──────────────────────────────────────────
-	osResult, err := osdetect.Detect()
+	osInfo, err := osdetect.DetectFull()
 	if err != nil {
 		return fmt.Errorf("OS detection failed: %w", err)
 	}
-	fmt.Printf("✓ OS detected: %s (%s/%s)\n", osResult.DisplayName, osResult.OS, osResult.Arch)
+	fmt.Printf("✓ OS detected: %s (%s/%s) — package manager: %s\n", osInfo.Name, osInfo.RawOS, osInfo.Arch, osInfo.PackageMgr)
 
 	// ── Step 2: Load config ────────────────────────────────────────
 	cfg, err := config.Load(cfgFile)
@@ -53,15 +60,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("✓ Configuration loaded (%d dependencies, template: %s)\n", len(cfg.Dependencies), cfg.Template)
 
 	// ── Step 3: Initialize logger ──────────────────────────────────
-	log, err := logger.New(verbose)
+	log, err := logger.New(verbose, jsonLogs)
 	if err != nil {
 		return fmt.Errorf("logger initialization failed: %w", err)
 	}
 	defer log.Close()
 
 	log.Info("DevForge init started", map[string]interface{}{
-		"project": projectName,
-		"dryRun":  dryRun,
+		"project":    projectName,
+		"dryRun":     dryRun,
+		"os":         osInfo.Name,
+		"packageMgr": osInfo.PackageMgr,
 	})
 
 	// ── Step 4: Initialize rollback manager ────────────────────────
@@ -69,24 +78,43 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// ── Step 5: Install dependencies ───────────────────────────────
 	exec := executor.New(log, dryRun)
-	inst, err := installer.New(log, exec)
+	inst, err := installer.NewFromOS(log, exec, osInfo)
 	if err != nil {
 		return fmt.Errorf("installer initialization failed: %w", err)
 	}
 
 	for _, dep := range cfg.Dependencies {
-		installed, err := inst.IsInstalled(dep.Name)
-		if err != nil {
-			log.Warn(fmt.Sprintf("could not check if %q is installed: %v", dep.Name, err))
+		installed, checkErr := inst.IsInstalled(dep.Name)
+		if checkErr != nil {
+			log.Warn(fmt.Sprintf("could not check if %q is installed: %v", dep.Name, checkErr))
 		}
+
 		if installed {
-			version, _ := inst.GetVersion(dep.Name)
-			fmt.Printf("✓ %s already installed (v%s)\n", dep.Name, version)
+			currentVersion, _ := inst.GetVersion(dep.Name)
+			fmt.Printf("✓ %s already installed (v%s)", dep.Name, currentVersion)
+
+			// Version mismatch check.
+			if dep.Version != "" && dep.Version != "latest" && currentVersion != "" {
+				desired, parseErr := semver.Parse(dep.Version)
+				current, curParseErr := semver.Parse(currentVersion)
+				if parseErr == nil && curParseErr == nil && !desired.IsZero() {
+					if !desired.MajorMatches(current) {
+						fmt.Printf(" ⚠ wanted v%s", dep.Version)
+						log.Warn(fmt.Sprintf("version mismatch for %q: installed=%s, wanted=%s", dep.Name, currentVersion, dep.Version))
+					}
+				}
+			}
+			fmt.Println()
 			log.Info(fmt.Sprintf("dependency %q already installed", dep.Name))
 			continue
 		}
-		fmt.Printf("⟳ Installing %s...\n", dep.Name)
-		if err := inst.Install(dep.Name); err != nil {
+
+		versionLabel := dep.Version
+		if versionLabel == "" || versionLabel == "latest" {
+			versionLabel = "latest"
+		}
+		fmt.Printf("⟳ Installing %s (v%s)...\n", dep.Name, versionLabel)
+		if err := inst.Install(dep.Name, dep.Version); err != nil {
 			log.Error(fmt.Sprintf("failed to install %q", dep.Name))
 			rbErr := rb.Execute()
 			if rbErr != nil {

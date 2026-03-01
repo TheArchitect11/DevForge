@@ -1,4 +1,3 @@
-// Package installer – Homebrew implementation of the Installer interface.
 package installer
 
 import (
@@ -11,19 +10,16 @@ import (
 
 // BrewInstaller manages dependencies via Homebrew on macOS.
 type BrewInstaller struct {
-	log  *logger.Logger
-	exec *executor.Executor
+	baseInstaller
 }
 
 // NewBrewInstaller creates a BrewInstaller after verifying that the
 // `brew` command is available on the system.
 func NewBrewInstaller(log *logger.Logger, exec *executor.Executor) (*BrewInstaller, error) {
 	bi := &BrewInstaller{
-		log:  log,
-		exec: exec,
+		baseInstaller: baseInstaller{log: log, exec: exec},
 	}
 
-	// Verify brew is available.
 	if err := bi.checkBrew(); err != nil {
 		return nil, err
 	}
@@ -52,7 +48,6 @@ func (b *BrewInstaller) IsInstalled(name string) (bool, error) {
 	b.log.Debug(fmt.Sprintf("checking if %q is installed via brew", name))
 	result, err := b.exec.Run("brew", "list", "--formula", name)
 	if err != nil {
-		// brew list returns non-zero if the formula is not installed.
 		return false, nil
 	}
 	if result.DryRun {
@@ -61,14 +56,20 @@ func (b *BrewInstaller) IsInstalled(name string) (bool, error) {
 	return true, nil
 }
 
-// Install installs a formula using Homebrew.
-func (b *BrewInstaller) Install(name string) error {
-	b.log.Info(fmt.Sprintf("installing %q via Homebrew...", name))
-	_, err := b.exec.Run("brew", "install", name)
-	if err != nil {
-		return fmt.Errorf("failed to install %q via Homebrew: %w", name, err)
+// Install installs a formula using Homebrew. If a specific version is
+// provided, it attempts to install name@version.
+func (b *BrewInstaller) Install(name string, version string) error {
+	formula := name
+	if !isLatest(version) {
+		formula = fmt.Sprintf("%s@%s", name, version)
 	}
-	b.log.Info(fmt.Sprintf("successfully installed %q", name))
+
+	b.log.Info(fmt.Sprintf("installing %q via Homebrew...", formula))
+	_, err := b.exec.Run("brew", "install", formula)
+	if err != nil {
+		return fmt.Errorf("failed to install %q via Homebrew: %w", formula, err)
+	}
+	b.log.Info(fmt.Sprintf("successfully installed %q", formula))
 	return nil
 }
 
@@ -82,7 +83,6 @@ func (b *BrewInstaller) GetVersion(name string) (string, error) {
 		return "dry-run", nil
 	}
 
-	// Output format: "name version"
 	parts := strings.Fields(result.Stdout)
 	if len(parts) < 2 {
 		return "", fmt.Errorf("unexpected version output for %q: %s", name, result.Stdout)

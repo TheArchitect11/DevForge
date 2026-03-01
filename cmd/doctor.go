@@ -34,6 +34,7 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	fmt.Println()
 	fmt.Println("  DevForge Doctor — System Readiness Report")
 	fmt.Println("  ══════════════════════════════════════════")
+	fmt.Printf("  DevForge version: %s\n", Version)
 	fmt.Println()
 
 	checks := []struct {
@@ -83,7 +84,6 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 }
 
 // checkTool looks up a binary and tries to retrieve its version string.
-// It never returns an error — failures are captured in the toolCheck result.
 func checkTool(name, binary, versionArg string) toolCheck {
 	tc := toolCheck{Name: name}
 
@@ -101,7 +101,6 @@ func checkTool(name, binary, versionArg string) toolCheck {
 		return tc
 	}
 
-	// Take only the first line of version output.
 	version := strings.TrimSpace(strings.Split(string(out), "\n")[0])
 	tc.Installed = true
 	tc.Version = version

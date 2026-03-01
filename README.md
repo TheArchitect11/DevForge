@@ -1,11 +1,11 @@
 <p align="center">
   <h1 align="center">⚒️ DevForge</h1>
-  <p align="center">Production-grade CLI for automated project scaffolding</p>
+  <p align="center">Production-grade cross-platform CLI for automated project scaffolding</p>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/go-1.26+-00ADD8?style=flat-square&logo=go" alt="Go Version" />
-  <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square&logo=apple" alt="Platform" />
+  <img src="https://img.shields.io/badge/platform-macOS%20|%20Linux%20|%20Windows-lightgrey?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
 </p>
 
@@ -13,16 +13,18 @@
 
 ## What is DevForge?
 
-DevForge is a cross-platform CLI tool that eliminates the tedium of project setup. Point it at a config file and a template repository, and it will:
+DevForge is an extensible CLI tool that eliminates the tedium of project setup. It detects your OS, installs dependencies with version pinning, clones templates from a remote registry, generates environment configuration, and rolls back automatically on failure.
 
-- **Detect your OS** and validate platform compatibility
-- **Install dependencies** via your platform's package manager (Homebrew on macOS)
-- **Clone starter templates** from any Git repository
-- **Generate `.env` files** from templates with interactive prompts
-- **Roll back automatically** if any step fails mid-process
-- **Run system health checks** with the `doctor` command
-
-Built with Go for single-binary distribution — no runtime dependencies required.
+**Key capabilities:**
+- 🌍 **Cross-platform** — macOS (Homebrew), Linux (APT/YUM), Windows (Chocolatey)
+- 📌 **Version pinning** — install specific dependency versions with semver comparison
+- 📦 **Template registry** — browse, search, and use templates from a remote registry
+- 🔌 **Plugin system** — extend DevForge with executable plugins via JSON stdin/stdout
+- 🔄 **Auto-update** — check and install updates from GitHub releases with checksum verification
+- 🛡️ **Security hardened** — URL validation, path traversal prevention, input sanitization
+- 📊 **Structured logging** — text or JSON output with persistent file logs
+- ⏪ **Rollback engine** — LIFO undo stack for all critical operations
+- 🏗️ **CI/CD ready** — GitHub Actions pipeline for cross-compilation and release
 
 ---
 
@@ -31,16 +33,23 @@ Built with Go for single-binary distribution — no runtime dependencies require
 ### From Source
 
 ```bash
-git clone https://github.com/chinmay/devforge.git
-cd devforge
-go build -o devforge .
+git clone https://github.com/ChinmayyK/DevForge.git
+cd DevForge
+make build
 sudo mv devforge /usr/local/bin/
+```
+
+### Cross-compile All Platforms
+
+```bash
+make build-all    # darwin/amd64, darwin/arm64, linux/amd64, windows/amd64
+make release      # build-all + SHA-256 checksums
 ```
 
 ### Verify
 
 ```bash
-devforge --help
+devforge --version
 devforge doctor
 ```
 
@@ -54,36 +63,22 @@ devforge doctor
 devforge init my-app
 ```
 
-This will:
-1. Detect your OS and architecture
-2. Load configuration from `config/default.yaml`
-3. Install any missing dependencies via Homebrew
-4. Clone the configured starter template
-5. Generate a `.env` file from `.env.template` (if present)
-6. Print a success summary with next steps
-
 ### Dry Run
-
-Preview what would happen without making any changes:
 
 ```bash
 devforge init my-app --dry-run
 ```
 
-### Verbose Logging
-
-Enable debug-level output for troubleshooting:
-
-```bash
-devforge init my-app --verbose
-```
-
 ### Custom Config
 
-Point to a custom configuration file:
+```bash
+devforge init my-app --config ./custom.yaml
+```
+
+### JSON Logging
 
 ```bash
-devforge init my-app --config ./myconfig.yaml
+devforge init my-app --json-logs --verbose
 ```
 
 ### System Health Check
@@ -92,9 +87,11 @@ devforge init my-app --config ./myconfig.yaml
 devforge doctor
 ```
 
-Outputs a formatted table showing the status of required tools:
-
 ```
+  DevForge Doctor — System Readiness Report
+  ══════════════════════════════════════════
+  DevForge version: 1.0.0
+
   Tool         Status       Version
   ────         ──────       ───────
   Homebrew     ✓ installed  Homebrew 5.0.15
@@ -105,70 +102,86 @@ Outputs a formatted table showing the status of required tools:
   ✅ All checks passed — system is ready!
 ```
 
+### Template Registry
+
+```bash
+devforge templates list          # list all
+devforge templates search react  # search by keyword
+devforge templates use next-app  # show template details
+```
+
+### Auto-Update
+
+```bash
+devforge update
+```
+
+### Plugins
+
+```bash
+devforge plugin list             # list installed plugins
+devforge plugin run my-plugin    # execute a plugin
+```
+
 ---
 
 ## Configuration
 
-DevForge uses YAML configuration. Default config is at `config/default.yaml`:
-
 ```yaml
 dependencies:
   - name: node
+    version: "18"
   - name: git
+    version: "latest"
   - name: docker
+    version: "latest"
 
 template: "https://github.com/some-org/node-template"
+registryUrl: "https://registry.devforge.dev/templates.json"
 
 linting: true
 gitHooks: true
 envFile: true
 ```
 
-| Field          | Type       | Description                                    |
-|----------------|------------|------------------------------------------------|
-| `dependencies` | `[]object` | Tools to install before scaffolding             |
-| `template`     | `string`   | Git URL of the starter template repository      |
-| `linting`      | `bool`     | Enable linting configuration                    |
-| `gitHooks`     | `bool`     | Enable git hooks setup                          |
-| `envFile`      | `bool`     | Generate `.env` from `.env.template`            |
-
 ---
 
 ## Architecture
 
-DevForge follows Go best practices with a modular, layered architecture:
-
 ```
-main.go                    → Entry point
-cmd/                       → CLI command definitions (Cobra)
-  root.go                  → Root command + global flags
-  init.go                  → Project scaffolding orchestration
-  doctor.go                → System health checks
-internal/                  → Private application packages
-  config/config.go         → YAML config loading (Viper)
-  logger/logger.go         → Structured logging (logrus)
-  osdetect/osdetect.go     → OS detection & validation
-  executor/executor.go     → Safe command execution wrapper
-  rollback/rollback.go     → LIFO rollback engine
-  installer/installer.go   → Package manager interface
-  installer/brew.go        → Homebrew implementation
-  template/clone.go        → Git template cloning (go-git)
-  envgen/envgen.go         → .env file generation
-config/                    → Configuration files
-  default.yaml             → Default configuration
+┌─────────────┐    ┌──────────────────────────────────────────┐
+│   main.go   │───→│  cmd/ (Cobra CLI Layer)                  │
+│  (ldflags)  │    │  root · init · doctor · templates        │
+└─────────────┘    │  update · plugin                         │
+                   └──────┬───────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────────┐
+          │               │                   │
+  ┌───────▼──────┐ ┌─────▼──────┐  ┌────────▼────────┐
+  │  osdetect    │ │   config   │  │    logger        │
+  │  (multi-OS)  │ │  (Viper)   │  │ (logrus+JSON)   │
+  └──────────────┘ └────────────┘  └─────────────────┘
+          │
+  ┌───────▼──────────────────────────────────────────┐
+  │  installer/ (Unified Interface)                   │
+  │  factory → brew | apt | yum | choco               │
+  └──────────────────────────────────────────────────┘
+          │
+  ┌───────▼──────┐ ┌────────────┐ ┌────────────────┐
+  │  template/   │ │  envgen/   │ │  rollback/     │
+  │  (go-git)    │ │  (.env)    │ │  (LIFO undo)   │
+  └──────────────┘ └────────────┘ └────────────────┘
+          │
+  ┌───────▼──────┐ ┌────────────┐ ┌────────────────┐
+  │  registry/   │ │  updater/  │ │  plugins/      │
+  │  (HTTP+cache)│ │ (GitHub)   │ │ (JSON stdio)   │
+  └──────────────┘ └────────────┘ └────────────────┘
+          │
+  ┌───────▼──────┐ ┌────────────┐
+  │  executor/   │ │  security/ │
+  │  (os/exec)   │ │ (validate) │
+  └──────────────┘ └────────────┘
 ```
-
-### Key Design Decisions
-
-| Concern               | Approach                                                    |
-|------------------------|-------------------------------------------------------------|
-| CLI Framework          | Cobra for commands, flags, and help generation               |
-| Configuration          | Viper for YAML parsing with validation                       |
-| Logging                | logrus with file + console output, verbose toggle            |
-| Command Execution      | Custom wrapper with dry-run, input sanitization, structured results |
-| Rollback               | LIFO action stack; all critical ops register undo actions    |
-| Dependency Injection   | Interfaces for installers; factory function selects platform |
-| Error Handling         | Explicit error returns; no panics; wrapped errors throughout |
 
 ---
 
@@ -176,48 +189,93 @@ config/                    → Configuration files
 
 ```
 devforge/
+├── .github/workflows/
+│   └── release.yml          # CI/CD: test → cross-compile → release
 ├── cmd/
-│   ├── root.go          # Root Cobra command with --config, --dry-run, --verbose
-│   ├── init.go          # Init command: full scaffolding orchestration
-│   └── doctor.go        # Doctor command: system readiness checks
+│   ├── root.go              # Root command + global flags
+│   ├── init.go              # Project scaffolding with rollback
+│   ├── doctor.go            # System readiness checks
+│   ├── templates.go         # Registry: list/search/use
+│   ├── update.go            # Auto-update from GitHub
+│   └── plugin.go            # Plugin list/run
 ├── internal/
-│   ├── config/
-│   │   └── config.go    # Viper-based config loading and validation
-│   ├── logger/
-│   │   └── logger.go    # logrus logger with file hook
-│   ├── osdetect/
-│   │   └── osdetect.go  # runtime.GOOS detection
-│   ├── executor/
-│   │   └── executor.go  # os/exec wrapper with sanitization
-│   ├── rollback/
-│   │   └── rollback.go  # Reverse-order rollback manager
+│   ├── config/config.go     # Viper YAML + version pinning
+│   ├── logger/logger.go     # logrus with JSON option
+│   ├── osdetect/osdetect.go # Multi-OS detection
+│   ├── executor/executor.go # Safe command execution
+│   ├── rollback/rollback.go # LIFO rollback engine
+│   ├── security/security.go # Input validation + sanitization
+│   ├── semver/semver.go     # Version parsing + comparison
 │   ├── installer/
-│   │   ├── installer.go # Installer interface + factory
-│   │   └── brew.go      # Homebrew implementation
-│   ├── template/
-│   │   └── clone.go     # go-git template cloner
-│   └── envgen/
-│       └── envgen.go    # .env file generator
-├── config/
-│   └── default.yaml     # Default configuration
-├── main.go              # Entry point
+│   │   ├── installer.go     # Installer interface
+│   │   ├── factory.go       # OS-based factory
+│   │   ├── brew.go          # Homebrew (macOS)
+│   │   ├── apt.go           # APT (Debian/Ubuntu)
+│   │   ├── yum.go           # YUM (RHEL/CentOS)
+│   │   └── choco.go         # Chocolatey (Windows)
+│   ├── template/clone.go    # go-git template cloner
+│   ├── envgen/envgen.go     # .env generator
+│   ├── registry/
+│   │   ├── schema.go        # Template types
+│   │   ├── client.go        # HTTPS client + search
+│   │   └── cache.go         # Offline cache
+│   ├── updater/updater.go   # GitHub release updater
+│   └── plugins/plugins.go   # Plugin discovery + execution
+├── config/default.yaml      # Default configuration
+├── Makefile                 # build / build-all / release / test
+├── main.go                  # Entry point with ldflags
 ├── go.mod
 └── go.sum
 ```
 
 ---
 
+## Plugin System
+
+Plugins are standalone executables in `~/.devforge/plugins/` named `devforge-plugin-<name>`.
+
+**Contract:** Plugins receive JSON via stdin and return JSON via stdout:
+
+```json
+// Input (stdin)
+{ "projectPath": "/path/to/project", "config": {}, "dryRun": false }
+
+// Output (stdout)
+{ "success": true, "message": "Plugin completed" }
+```
+
+---
+
+## Security Model
+
+- All command arguments sanitized against shell metacharacters
+- URLs validated (scheme + host)
+- Paths checked for directory traversal
+- Dependency names validated against allowlist pattern
+- YAML config strictly validated
+- No shell string concatenation — argument arrays only
+- File permissions properly restricted
+
+---
+
+## CI/CD Pipeline
+
+On tag push (`v*`):
+1. **Test** — `go test`, `go vet`
+2. **Build** — matrix: darwin/amd64, darwin/arm64, linux/amd64, windows/amd64
+3. **Release** — SHA-256 checksums + GitHub Release with all binaries
+
+---
+
 ## Roadmap
 
-- [ ] **Linux support** — apt/dnf installer implementations
-- [ ] **Windows support** — winget/choco installer implementations
-- [ ] **Plugin system** — user-defined post-scaffold hooks
-- [ ] **Multiple templates** — template marketplace with selection
-- [ ] **Interactive mode** — TUI-based guided project setup
-- [ ] **CI/CD generation** — GitHub Actions / GitLab CI templates
-- [ ] **Monorepo support** — multi-service project scaffolding
-- [ ] **Update command** — `devforge update` to upgrade project dependencies
-- [ ] **Config validation CLI** — `devforge validate` to lint config files
+- [ ] Interactive TUI mode (bubbletea)
+- [ ] Monorepo support
+- [ ] Custom post-scaffold hooks
+- [ ] Template marketplace UI
+- [ ] Config validation command
+- [ ] Dependency auto-upgrade command
+- [ ] Plugin marketplace
 
 ---
 
@@ -227,6 +285,4 @@ MIT
 
 ---
 
-<p align="center">
-  Built with ❤️ in Go
-</p>
+<p align="center">Built with ❤️ in Go</p>
