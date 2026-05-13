@@ -40,7 +40,7 @@ func Run(registryURL string, verbose, jsonLogs bool) (*config.Config, error) {
 	// ── Banner ─────────────────────────────────────────────────────
 	fmt.Println()
 	ux.Banner("Interactive Setup  —  no devforge.yaml found")
-	fmt.Println("  Answer a few questions to scaffold your project.\n")
+	fmt.Print("  Answer a few questions to scaffold your project.\n\n")
 
 	// ── Step 1: Select dependencies ────────────────────────────────
 	depOptions := make([]huh.Option[string], len(availableDeps))

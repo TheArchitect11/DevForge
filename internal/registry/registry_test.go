@@ -1,6 +1,9 @@
 package registry
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTemplate_Validate(t *testing.T) {
 	tests := []struct {
@@ -100,4 +103,8 @@ func TestContainsIgnoreCase(t *testing.T) {
 			}
 		})
 	}
+}
+
+func containsIgnoreCase(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }

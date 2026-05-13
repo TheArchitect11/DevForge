@@ -259,7 +259,7 @@ func (s *Spinner) Stop(successMsg string) {
 		<-s.done
 	}
 	if successMsg != "" {
-		Success(successMsg)
+		Success("%s", successMsg)
 	}
 }
 

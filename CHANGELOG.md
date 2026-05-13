@@ -5,7 +5,7 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic V
 
 ---
 
-## [1.1.0] - 2026-05-13
+## [1.1.1] - 2026-05-13
 
 ### Added
 - DNF installer support for modern Fedora (22+), Rocky Linux, and AlmaLinux
