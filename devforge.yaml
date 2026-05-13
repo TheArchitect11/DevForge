@@ -1,9 +1,31 @@
+# DevForge project configuration
+# ─────────────────────────────────────────────────────────────────────
+# Run `devforge init <project-name>` to scaffold a new project.
+# Run `devforge doctor` to verify all dependencies are installed.
+# Run `devforge templates list` to browse the template registry.
+# ─────────────────────────────────────────────────────────────────────
+
 dependencies:
   - name: node
     version: "20"
+  - name: git
+  - name: docker
 
-template: https://github.com/ChinmayyK/DevForge.git
+# Starter template — any public Git URL works here.
+template: "https://github.com/ChinmayyK/DevForge.git"
 
-linting: false
-gitHooks: false
+# Generate a .env file from .env.template in the cloned project.
 envFile: false
+
+# Configure linting tools (ESLint, golangci-lint, …).
+linting: false
+
+# Install git hooks (pre-commit, lint-staged via husky/lefthook).
+gitHooks: false
+
+# Post-init hooks — commands run inside the new project directory
+# after scaffolding completes. Examples:
+#   - "npm install"
+#   - "go mod tidy"
+#   - "pip install -r requirements.txt"
+postInit: []

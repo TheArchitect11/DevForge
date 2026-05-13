@@ -1,6 +1,6 @@
 module github.com/chinmay/devforge
 
-go 1.25.0
+go 1.22.0
 
 require (
 	github.com/charmbracelet/huh v0.8.0

@@ -87,3 +87,17 @@ func (c *ChocoInstaller) GetVersion(name string) (string, error) {
 	}
 	return "", fmt.Errorf("could not determine version for %q", name)
 }
+
+
+// Upgrade upgrades an installed package to the given version (or latest).
+func (c *ChocoInstaller) Upgrade(name, version string) error {
+	c.log.Info(fmt.Sprintf("upgrading %q via Chocolatey", name))
+	args := []string{"upgrade", name, "-y"}
+	if !isLatest(version) {
+		args = append(args, "--version", version)
+	}
+	if _, err := c.exec.Run("choco", args...); err != nil {
+		return fmt.Errorf("choco upgrade %q failed: %w", name, err)
+	}
+	return nil
+}

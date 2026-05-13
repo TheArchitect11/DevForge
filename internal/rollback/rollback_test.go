@@ -2,83 +2,99 @@ package rollback
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/chinmay/devforge/internal/logger"
 )
 
-func newTestManager(t *testing.T) *Manager {
+func newTestLogger(t *testing.T) *logger.Logger {
 	t.Helper()
-	log, err := logger.New(false, false)
+	log, err := logger.New(false)
 	if err != nil {
-		t.Fatalf("failed to create logger: %v", err)
+		t.Fatalf("logger: %v", err)
 	}
 	t.Cleanup(func() { log.Close() })
-	return NewManager(log)
+	return log
 }
 
-func TestManager_EmptyExecute(t *testing.T) {
-	m := newTestManager(t)
-	if m.HasActions() {
-		t.Error("new manager should have no actions")
-	}
-	if err := m.Execute(); err != nil {
-		t.Errorf("Execute() on empty manager should return nil, got: %v", err)
-	}
-}
+func TestExecute_LIFO_Order(t *testing.T) {
+	log := newTestLogger(t)
+	m := NewManager(log)
 
-func TestManager_LIFO_Order(t *testing.T) {
-	m := newTestManager(t)
-	var order []int
-
-	m.Register("first", func() error { order = append(order, 1); return nil })
-	m.Register("second", func() error { order = append(order, 2); return nil })
-	m.Register("third", func() error { order = append(order, 3); return nil })
-
-	if !m.HasActions() {
-		t.Error("manager should have actions after registration")
+	order := []int{}
+	for i := 1; i <= 4; i++ {
+		i := i
+		m.Register(fmt.Sprintf("action %d", i), func() error {
+			order = append(order, i)
+			return nil
+		})
 	}
 
 	if err := m.Execute(); err != nil {
-		t.Errorf("Execute() unexpected error: %v", err)
+		t.Fatalf("Execute() error: %v", err)
 	}
 
-	// LIFO: third → second → first
-	expected := []int{3, 2, 1}
-	if len(order) != len(expected) {
-		t.Fatalf("executed %d actions, want %d", len(order), len(expected))
-	}
-	for i, v := range order {
-		if v != expected[i] {
-			t.Errorf("action[%d] = %d, want %d", i, v, expected[i])
+	// Expect reverse registration order: 4, 3, 2, 1
+	want := []int{4, 3, 2, 1}
+	for j, got := range order {
+		if got != want[j] {
+			t.Errorf("position %d: got action %d, want %d", j, got, want[j])
 		}
 	}
 }
 
-func TestManager_PartialFailure(t *testing.T) {
-	m := newTestManager(t)
-
-	m.Register("succeeds", func() error { return nil })
-	m.Register("fails", func() error { return errors.New("rollback error") })
-	m.Register("also succeeds", func() error { return nil })
-
-	err := m.Execute()
-	if err == nil {
-		t.Error("Execute() should return error when an action fails")
+func TestExecute_Empty(t *testing.T) {
+	m := NewManager(newTestLogger(t))
+	if err := m.Execute(); err != nil {
+		t.Errorf("Execute() on empty manager should return nil, got %v", err)
 	}
 }
 
-func TestManager_ClearsAfterExecute(t *testing.T) {
-	m := newTestManager(t)
-	m.Register("action", func() error { return nil })
-	_ = m.Execute()
+func TestExecute_ContinuesAfterFailure(t *testing.T) {
+	m := NewManager(newTestLogger(t))
 
-	if m.HasActions() {
-		t.Error("actions should be cleared after Execute()")
+	ran := make([]bool, 3)
+	m.Register("ok-first", func() error { ran[0] = true; return nil })
+	m.Register("failing", func() error { ran[1] = true; return errors.New("boom") })
+	m.Register("ok-last", func() error { ran[2] = true; return nil })
+
+	err := m.Execute()
+	// Should return a combined error but still run all actions.
+	if err == nil {
+		t.Error("expected error from failing action, got nil")
 	}
+	for i, r := range ran {
+		if !r {
+			t.Errorf("action[%d] was not executed despite prior failure", i)
+		}
+	}
+}
 
-	// Second execute should be a no-op
-	if err := m.Execute(); err != nil {
-		t.Errorf("second Execute() should return nil, got: %v", err)
+func TestExecute_Idempotent(t *testing.T) {
+	m := NewManager(newTestLogger(t))
+	calls := 0
+	m.Register("once", func() error { calls++; return nil })
+
+	m.Execute()
+	m.Execute() // second call should be a no-op
+
+	if calls != 1 {
+		t.Errorf("Execute() should only run actions once; ran %d times", calls)
+	}
+}
+
+func TestHasActions(t *testing.T) {
+	m := NewManager(newTestLogger(t))
+	if m.HasActions() {
+		t.Error("HasActions() should be false on empty manager")
+	}
+	m.Register("x", func() error { return nil })
+	if !m.HasActions() {
+		t.Error("HasActions() should be true after Register()")
+	}
+	m.Execute()
+	if m.HasActions() {
+		t.Error("HasActions() should be false after Execute()")
 	}
 }

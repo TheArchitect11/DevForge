@@ -5,6 +5,8 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+
+	"github.com/chinmay/devforge/internal/ux"
 )
 
 var versionCmd = &cobra.Command{
@@ -18,9 +20,11 @@ func init() {
 }
 
 func runVersion(_ *cobra.Command, _ []string) {
+	ux.Banner(fmt.Sprintf("v%s", Version))
+	fmt.Printf("  Binary  : devforge v%s\n", Version)
+	fmt.Printf("  Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("  Go      : %s\n", runtime.Version())
 	fmt.Println()
-	fmt.Printf("DevForge v%s\n", Version)
-	fmt.Printf("OS: %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Printf("Go version: %s\n", runtime.Version())
+	fmt.Println("  Run 'devforge update' to check for a newer release.")
 	fmt.Println()
 }

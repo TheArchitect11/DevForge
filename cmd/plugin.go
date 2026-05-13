@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/chinmay/devforge/internal/logger"
 	"github.com/chinmay/devforge/internal/plugins"
+	"github.com/chinmay/devforge/internal/ux"
 )
 
 var pluginCmd = &cobra.Command{
@@ -14,11 +16,14 @@ var pluginCmd = &cobra.Command{
 	Short: "Manage and run DevForge plugins",
 	Long: `Discover and execute DevForge plugins.
 
-Plugins are executable binaries located in ~/.devforge/plugins/
-following the naming convention: devforge-plugin-<name>
+Plugins are executables in ~/.devforge/plugins/ following the naming
+convention devforge-plugin-<name>. They communicate via JSON over stdin/stdout.
 
-They communicate via JSON over stdin/stdout.`,
+  devforge plugin list           # discover installed plugins
+  devforge plugin run <name>     # execute a plugin`,
 }
+
+var pluginRunProjectPath string
 
 var pluginListCmd = &cobra.Command{
 	Use:   "list",
@@ -34,6 +39,7 @@ var pluginRunCmd = &cobra.Command{
 }
 
 func init() {
+	pluginRunCmd.Flags().StringVarP(&pluginRunProjectPath, "project", "p", ".", "path to the project directory passed to the plugin")
 	pluginCmd.AddCommand(pluginListCmd)
 	pluginCmd.AddCommand(pluginRunCmd)
 	rootCmd.AddCommand(pluginCmd)
@@ -58,25 +64,23 @@ func runPluginList(_ *cobra.Command, _ []string) error {
 
 	if len(discovered) == 0 {
 		fmt.Println()
-		fmt.Println("  No plugins installed.")
+		ux.InfoMsg("No plugins installed.")
 		fmt.Println()
-		fmt.Println("  To install a plugin, place an executable binary in:")
+		fmt.Println("  To add a plugin, place an executable binary at:")
 		fmt.Println("    ~/.devforge/plugins/devforge-plugin-<name>")
 		fmt.Println()
 		return nil
 	}
 
-	fmt.Println()
-	fmt.Println("  Installed Plugins")
-	fmt.Println("  ═════════════════")
-	fmt.Println()
-	fmt.Printf("  %-20s %s\n", "Name", "Path")
-	fmt.Printf("  %-20s %s\n", "────", "────")
+	ux.Header(fmt.Sprintf("Installed Plugins (%d)", len(discovered)))
+	fmt.Printf("  %-22s %s\n", "Name", "Path")
+	fmt.Printf("  %-22s %s\n", "────", "────")
 	for _, p := range discovered {
-		fmt.Printf("  %-20s %s\n", p.Name, p.Path)
+		fmt.Printf("  %-22s %s\n", p.Name, p.Path)
 	}
 	fmt.Println()
-
+	fmt.Println("  Run:  devforge plugin run <name>")
+	fmt.Println()
 	return nil
 }
 
@@ -94,17 +98,35 @@ func runPluginRun(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("plugin manager initialization failed: %w", err)
 	}
 
-	input := plugins.PluginInput{
-		ProjectPath: ".",
+	// Resolve the project path to an absolute path.
+	projectPath, err := os.Getwd()
+	if err != nil {
+		projectPath = "."
+	}
+	if pluginRunProjectPath != "." {
+		projectPath = pluginRunProjectPath
+	}
+
+	ux.Step("Running plugin %q against %s", name, projectPath)
+
+	output, err := mgr.Run(name, plugins.PluginInput{
+		ProjectPath: projectPath,
 		Config:      make(map[string]interface{}),
 		DryRun:      dryRun,
-	}
-
-	output, err := mgr.Run(name, input)
+	})
 	if err != nil {
-		return fmt.Errorf("plugin execution failed: %w", err)
+		return fmt.Errorf("plugin %q failed: %w", name, err)
 	}
 
-	fmt.Printf("  Plugin %q completed: %s\n", name, output.Message)
+	if output.Success {
+		ux.Success("Plugin %q: %s", name, output.Message)
+	} else {
+		ux.Warning("Plugin %q returned: %s", name, output.Message)
+	}
+
+	for _, artifact := range output.Artifacts {
+		fmt.Printf("  %s %s\n", ux.Arrow, artifact)
+	}
+
 	return nil
 }

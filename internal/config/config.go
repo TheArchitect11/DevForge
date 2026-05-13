@@ -1,5 +1,5 @@
-// Package config handles loading, parsing, and validating DevForge
-// configuration files using Viper.
+// Package config handles loading, parsing, validating, and serialising
+// DevForge configuration files (YAML).
 package config
 
 import (
@@ -12,34 +12,29 @@ import (
 	"github.com/chinmay/devforge/internal/security"
 )
 
-// Dependency represents a single tool dependency that DevForge ensures
-// is installed before scaffolding a project.
+// Dependency represents a single tool that DevForge ensures is installed.
 type Dependency struct {
 	Name    string `mapstructure:"name"`
 	Version string `mapstructure:"version"`
 }
 
-// Config is the top-level configuration structure loaded from YAML.
+// Config is the top-level structure loaded from a devforge.yaml file.
 type Config struct {
-	// Dependencies lists the CLI tools required for the project.
 	Dependencies []Dependency `mapstructure:"dependencies"`
-	// Template is the Git URL of the starter template repository.
-	Template string `mapstructure:"template"`
-	// RegistryURL is the URL of the remote template registry.
-	RegistryURL string `mapstructure:"registryUrl"`
-	// Linting indicates whether linting should be configured.
-	Linting bool `mapstructure:"linting"`
-	// GitHooks indicates whether git hooks should be set up.
-	GitHooks bool `mapstructure:"gitHooks"`
-	// EnvFile indicates whether a .env file should be generated.
-	EnvFile bool `mapstructure:"envFile"`
+	Template     string       `mapstructure:"template"`
+	RegistryURL  string       `mapstructure:"registryUrl"`
+	Linting      bool         `mapstructure:"linting"`
+	GitHooks     bool         `mapstructure:"gitHooks"`
+	EnvFile      bool         `mapstructure:"envFile"`
+	// PostInit commands run inside the new project directory after scaffolding.
+	// Examples: "npm install", "go mod tidy", "pip install -r requirements.txt"
+	PostInit []string `mapstructure:"postInit"`
 }
 
-// Load reads the configuration from the given file path.
+// Load reads configuration from configPath (or default search paths when empty).
 func Load(configPath string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigType("yaml")
-
 	if configPath != "" {
 		v.SetConfigFile(configPath)
 	} else {
@@ -47,45 +42,71 @@ func Load(configPath string) (*Config, error) {
 		v.AddConfigPath("config")
 		v.AddConfigPath(".")
 	}
-
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
-
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
-
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
-
 	return &cfg, nil
 }
 
-// LoadFromBytes reads the configuration directly from an in-memory byte slice.
+// LoadFromBytes reads configuration from an in-memory YAML slice.
 func LoadFromBytes(data []byte) (*Config, error) {
 	v := viper.New()
 	v.SetConfigType("yaml")
-
 	if err := v.ReadConfig(bytes.NewReader(data)); err != nil {
 		return nil, fmt.Errorf("failed to read config from bytes: %w", err)
 	}
-
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config bytes: %w", err)
 	}
-
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
-
 	return &cfg, nil
 }
 
-// validate ensures all required configuration fields are present.
+// ToYAML serialises the Config back to a YAML byte slice with comments.
+// This is used by the --save-config flag to persist wizard-built configs.
+func (c *Config) ToYAML() ([]byte, error) {
+	var sb strings.Builder
+
+	sb.WriteString("# DevForge project configuration\n")
+	sb.WriteString("# Run: devforge init <project-name>\n\n")
+
+	sb.WriteString("dependencies:\n")
+	for _, dep := range c.Dependencies {
+		if dep.Version != "" && dep.Version != "latest" {
+			sb.WriteString(fmt.Sprintf("  - name: %s\n    version: %q\n", dep.Name, dep.Version))
+		} else {
+			sb.WriteString(fmt.Sprintf("  - name: %s\n", dep.Name))
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("\ntemplate: %q\n", c.Template))
+	sb.WriteString(fmt.Sprintf("\nenvFile:  %v\n", c.EnvFile))
+	sb.WriteString(fmt.Sprintf("linting:  %v\n", c.Linting))
+	sb.WriteString(fmt.Sprintf("gitHooks: %v\n", c.GitHooks))
+
+	if len(c.PostInit) > 0 {
+		sb.WriteString("\npostInit:\n")
+		for _, hook := range c.PostInit {
+			sb.WriteString(fmt.Sprintf("  - %q\n", hook))
+		}
+	} else {
+		sb.WriteString("\n# postInit: []  # commands to run inside the new project after scaffolding\n")
+	}
+
+	return []byte(sb.String()), nil
+}
+
+// validate checks required fields and validates their content.
 func validate(cfg *Config) error {
 	var errs []string
 
@@ -94,9 +115,9 @@ func validate(cfg *Config) error {
 	}
 	for i, dep := range cfg.Dependencies {
 		if dep.Name == "" {
-			errs = append(errs, fmt.Sprintf("dependency at index %d has an empty name", i))
+			errs = append(errs, fmt.Sprintf("dependency[%d] has an empty name", i))
 		} else if err := security.ValidateName(dep.Name); err != nil {
-			errs = append(errs, fmt.Sprintf("dependency at index %d: %v", i, err))
+			errs = append(errs, fmt.Sprintf("dependency[%d]: %v", i, err))
 		}
 	}
 

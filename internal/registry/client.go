@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/chinmay/devforge/internal/logger"
@@ -24,11 +25,9 @@ type Client struct {
 func NewClient(registryURL string, log *logger.Logger) *Client {
 	return &Client{
 		registryURL: registryURL,
-		httpClient: &http.Client{
-			Timeout: defaultTimeout,
-		},
-		cache: NewCache(log),
-		log:   log,
+		httpClient:  &http.Client{Timeout: defaultTimeout},
+		cache:       NewCache(log),
+		log:         log,
 	}
 }
 
@@ -43,16 +42,13 @@ func (c *Client) Fetch(forceRefresh bool) (*Registry, error) {
 		c.log.Debug(fmt.Sprintf("cache miss or expired: %v", err))
 	}
 
-	c.log.Debug("fetching template registry", map[string]interface{}{
-		"url": c.registryURL,
-	})
+	c.log.Debug("fetching template registry", map[string]interface{}{"url": c.registryURL})
 
 	reg, err := c.fetchRemote()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch remote registry: %w", err)
 	}
 
-	// Cache the successful response for offline use.
 	if cacheErr := c.cache.Save(reg); cacheErr != nil {
 		c.log.Warn(fmt.Sprintf("failed to cache registry: %v", cacheErr))
 	}
@@ -72,7 +68,7 @@ func (c *Client) fetchRemote() (*Registry, error) {
 		return nil, fmt.Errorf("registry returned HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -85,63 +81,36 @@ func (c *Client) fetchRemote() (*Registry, error) {
 	return &reg, nil
 }
 
-// Search filters templates by keyword, matching against name,
-// description, and tags.
+// Search filters templates by keyword, matching against name, description,
+// and tags (case-insensitive).
 func (c *Client) Search(reg *Registry, keyword string) []Template {
 	if keyword == "" {
 		return reg.ValidTemplates()
 	}
 
+	kw := strings.ToLower(keyword)
 	var results []Template
 	for _, t := range reg.ValidTemplates() {
-		if containsIgnoreCase(t.Name, keyword) ||
-			containsIgnoreCase(t.Description, keyword) ||
-			tagsContain(t.Tags, keyword) {
+		if strings.Contains(strings.ToLower(t.Name), kw) ||
+			strings.Contains(strings.ToLower(t.Description), kw) ||
+			tagsContain(t.Tags, kw) {
 			results = append(results, t)
 		}
 	}
 	return results
 }
 
-func containsIgnoreCase(s, substr string) bool {
-	return len(s) >= len(substr) &&
-		(s == substr || len(substr) == 0 ||
-			findIgnoreCase(s, substr))
-}
-
-func findIgnoreCase(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if equalFoldSlice(s[i:i+len(substr)], substr) {
-			return true
-		}
-	}
-	return false
-}
-
-func equalFoldSlice(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		ca, cb := a[i], b[i]
-		if ca >= 'A' && ca <= 'Z' {
-			ca += 'a' - 'A'
-		}
-		if cb >= 'A' && cb <= 'Z' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
-}
-
-func tagsContain(tags []string, keyword string) bool {
+func tagsContain(tags []string, kwLower string) bool {
 	for _, tag := range tags {
-		if containsIgnoreCase(tag, keyword) {
+		if strings.Contains(strings.ToLower(tag), kwLower) {
 			return true
 		}
 	}
 	return false
+}
+
+// ClearCache removes the local cache file. The next Fetch() will pull
+// fresh data from the remote registry.
+func (c *Client) ClearCache() error {
+	return c.cache.Clear()
 }

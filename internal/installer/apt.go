@@ -76,3 +76,17 @@ func (a *AptInstaller) GetVersion(name string) (string, error) {
 	}
 	return strings.TrimSpace(result.Stdout), nil
 }
+
+
+// Upgrade upgrades an installed package to the given version (or latest).
+func (a *AptInstaller) Upgrade(name, version string) error {
+	pkg := name
+	if !isLatest(version) {
+		pkg = fmt.Sprintf("%s=%s*", name, version)
+	}
+	a.log.Info(fmt.Sprintf("upgrading %q via apt-get", pkg))
+	if _, err := a.exec.Run("sudo", "apt-get", "install", "--only-upgrade", "-y", pkg); err != nil {
+		return fmt.Errorf("apt-get upgrade %q failed: %w", pkg, err)
+	}
+	return nil
+}

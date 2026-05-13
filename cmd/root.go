@@ -4,8 +4,9 @@ package cmd
 import (
 	"os"
 
-	"github.com/chinmay/devforge/internal/ux"
 	"github.com/spf13/cobra"
+
+	"github.com/chinmay/devforge/internal/ux"
 )
 
 // Version is set via ldflags at build time.
@@ -18,25 +19,30 @@ var (
 	verbose  bool
 	jsonLogs bool
 	force    bool
+	noColor  bool
 )
 
-// rootCmd is the base command for the DevForge CLI.
 var rootCmd = &cobra.Command{
 	Use:   "devforge <command>",
 	Short: "DevForge — Development Environment Automation CLI",
 	Long: `DevForge — Development Environment Automation CLI
 
-A powerful, standalone CLI tool that hardens and automates project scaffolding:
-  ✔ Detects OS and architecture automatically
-  ✔ Installs required toolchains safely
-  ✔ Uses smart dependency resolution and version pinning
-  ✔ Clones organization templates securely
-  ✔ Provides professional configuration management
+A fast, standalone tool for scaffolding and hardening development environments:
+  ✔ Detects OS and package manager automatically
+  ✔ Installs required toolchains with version pinning
+  ✔ Clones starter templates and initialises a fresh git history
+  ✔ Generates .env files from templates
+  ✔ Supports post-init hooks (npm install, go mod tidy, …)
+  ✔ Provides interactive wizard when no config file is found
 
-Built for elite developers who value speed, safety, and consistency.`,
+Run "devforge init <project-name>" to get started.`,
+
+	// Suppress cobra's default "Usage:" dump and double error printing.
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
-// Execute runs the root command. This is the entry point called from main.
+// Execute is the entry point called from main.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		ux.Error(err)
@@ -44,14 +50,19 @@ func Execute() {
 	}
 }
 
-// SetVersion allows main.go to inject the build-time version.
+// SetVersion lets main.go inject the build-time version string.
 func SetVersion(v string) {
 	Version = v
 	rootCmd.Version = v
 }
 
 func init() {
-	// Custom premium help template.
+	cobra.OnInitialize(func() {
+		if noColor {
+			ux.SetColorEnabled(false)
+		}
+	})
+
 	rootCmd.SetHelpTemplate(`{{.Long}}
 
 Usage:
@@ -69,6 +80,7 @@ Use "{{.CommandPath}} [command] --help" for more information about a command.
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "path to config file (default: config/default.yaml)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "simulate operations without making changes")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable debug logging")
-	rootCmd.PersistentFlags().BoolVar(&jsonLogs, "json-logs", false, "structured JSON output")
+	rootCmd.PersistentFlags().BoolVar(&jsonLogs, "json-logs", false, "structured JSON output for CI pipelines")
 	rootCmd.PersistentFlags().BoolVar(&force, "force", false, "force overwrite of existing directories/files")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (also honoured via NO_COLOR env var)")
 }

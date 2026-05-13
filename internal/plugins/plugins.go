@@ -1,21 +1,27 @@
 // Package plugins provides discovery, validation, and execution of
 // DevForge plugins. Plugins are standalone executables that communicate
-// via JSON over stdin/stdout.
+// via JSON over stdin/stdout. Each plugin run is bounded by a 30-second
+// timeout to prevent hangs.
 package plugins
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chinmay/devforge/internal/logger"
 )
 
-const pluginPrefix = "devforge-plugin-"
+const (
+	pluginPrefix  = "devforge-plugin-"
+	pluginTimeout = 30 * time.Second
+)
 
 // PluginInput is the JSON contract sent to plugins via stdin.
 type PluginInput struct {
@@ -24,11 +30,12 @@ type PluginInput struct {
 	DryRun      bool                   `json:"dryRun"`
 }
 
-// PluginOutput is the expected JSON response from a plugin.
+// PluginOutput is the expected JSON response from a plugin via stdout.
 type PluginOutput struct {
-	Success bool            `json:"success"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
+	Success   bool            `json:"success"`
+	Message   string          `json:"message"`
+	Artifacts []string        `json:"artifacts,omitempty"` // files created/modified by the plugin
+	Data      json.RawMessage `json:"data,omitempty"`
 }
 
 // PluginInfo describes a discovered plugin.
@@ -43,8 +50,7 @@ type Manager struct {
 	log       *logger.Logger
 }
 
-// NewManager creates a plugin Manager. Plugins are discovered in
-// ~/.devforge/plugins/.
+// NewManager creates a Manager. Plugins are discovered in ~/.devforge/plugins/.
 func NewManager(log *logger.Logger) (*Manager, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -53,24 +59,20 @@ func NewManager(log *logger.Logger) (*Manager, error) {
 
 	dir := filepath.Join(home, ".devforge", "plugins")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create plugins directory: %w", err)
+		return nil, fmt.Errorf("failed to create plugins directory %s: %w", dir, err)
 	}
 
-	return &Manager{
-		pluginDir: dir,
-		log:       log,
-	}, nil
+	return &Manager{pluginDir: dir, log: log}, nil
 }
 
-// Discover scans the plugin directory for executables matching the
-// naming convention devforge-plugin-<name>.
+// Discover scans the plugin directory for executables named devforge-plugin-<name>.
 func (m *Manager) Discover() ([]PluginInfo, error) {
 	entries, err := os.ReadDir(m.pluginDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read plugins directory: %w", err)
+		return nil, fmt.Errorf("failed to read plugins directory %s: %w", m.pluginDir, err)
 	}
 
-	var plugins []PluginInfo
+	var found []PluginInfo
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -81,31 +83,29 @@ func (m *Manager) Discover() ([]PluginInfo, error) {
 			continue
 		}
 
-		fullPath := filepath.Join(m.pluginDir, name)
 		info, err := entry.Info()
 		if err != nil {
-			m.log.Warn(fmt.Sprintf("skipping plugin %q: %v", name, err))
+			m.log.Warn(fmt.Sprintf("skipping plugin %q: stat failed: %v", name, err))
 			continue
 		}
 
-		// Verify it's executable.
 		if info.Mode()&0o111 == 0 {
-			m.log.Warn(fmt.Sprintf("skipping plugin %q: not executable", name))
+			m.log.Warn(fmt.Sprintf("skipping plugin %q: not executable (chmod +x to fix)", name))
 			continue
 		}
 
-		pluginName := strings.TrimPrefix(name, pluginPrefix)
-		plugins = append(plugins, PluginInfo{
-			Name: pluginName,
-			Path: fullPath,
+		found = append(found, PluginInfo{
+			Name: strings.TrimPrefix(name, pluginPrefix),
+			Path: filepath.Join(m.pluginDir, name),
 		})
 	}
 
-	return plugins, nil
+	return found, nil
 }
 
-// Run executes a plugin by name, sending the input contract via stdin
-// and capturing the JSON response from stdout.
+// Run executes a plugin by name, sending PluginInput as JSON on stdin
+// and parsing the JSON response from stdout. The call is bounded by
+// pluginTimeout (30 s) to prevent indefinite hangs.
 func (m *Manager) Run(name string, input PluginInput) (*PluginOutput, error) {
 	plugins, err := m.Discover()
 	if err != nil {
@@ -114,37 +114,51 @@ func (m *Manager) Run(name string, input PluginInput) (*PluginOutput, error) {
 
 	var pluginPath string
 	for _, p := range plugins {
-		if p.Name == name {
+		if strings.EqualFold(p.Name, name) {
 			pluginPath = p.Path
 			break
 		}
 	}
 
 	if pluginPath == "" {
-		return nil, fmt.Errorf("plugin %q not found in %s", name, m.pluginDir)
+		return nil, fmt.Errorf("plugin %q not found in %s\n  Tip: run 'devforge plugin list' to see installed plugins", name, m.pluginDir)
 	}
-
-	m.log.Info(fmt.Sprintf("running plugin %q...", name))
 
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal plugin input: %w", err)
 	}
 
-	cmd := exec.Command(pluginPath)
+	ctx, cancel := context.WithTimeout(context.Background(), pluginTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, pluginPath)
 	cmd.Stdin = bytes.NewReader(inputJSON)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	m.log.Info(fmt.Sprintf("running plugin %q (timeout: %s)", name, pluginTimeout))
+
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("plugin %q failed: %w\nstderr: %s", name, err, stderr.String())
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("plugin %q timed out after %s", name, pluginTimeout)
+		}
+		errDetail := strings.TrimSpace(stderr.String())
+		if errDetail == "" {
+			errDetail = err.Error()
+		}
+		return nil, fmt.Errorf("plugin %q failed: %s", name, errDetail)
 	}
 
 	var output PluginOutput
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		return nil, fmt.Errorf("plugin %q returned invalid JSON: %w\nraw output: %s", name, err, stdout.String())
+		preview := stdout.String()
+		if len(preview) > 200 {
+			preview = preview[:197] + "…"
+		}
+		return nil, fmt.Errorf("plugin %q returned invalid JSON: %w\n  raw output: %s", name, err, preview)
 	}
 
 	if !output.Success {

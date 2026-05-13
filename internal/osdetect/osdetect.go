@@ -131,9 +131,16 @@ func detectLinux(arch string) (OSInfo, error) {
 		info.Family = "debian"
 		info.PackageMgr = "apt"
 
+	// Fedora 22+, Rocky Linux, and AlmaLinux use DNF as the primary package manager.
+	case strings.Contains(id, "fedora") || strings.Contains(id, "rocky") ||
+		strings.Contains(id, "almalinux") || strings.Contains(idLike, "fedora"):
+		info.Family = "rhel"
+		info.PackageMgr = "dnf"
+
+	// RHEL and CentOS historically use YUM (RHEL 8+ also supports DNF;
+	// the factory will prefer DNF when available at runtime).
 	case strings.Contains(id, "rhel") || strings.Contains(id, "centos") ||
-		strings.Contains(id, "fedora") || strings.Contains(id, "rocky") ||
-		strings.Contains(idLike, "rhel") || strings.Contains(idLike, "fedora"):
+		strings.Contains(idLike, "rhel"):
 		info.Family = "rhel"
 		info.PackageMgr = "yum"
 

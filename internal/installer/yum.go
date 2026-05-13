@@ -76,3 +76,17 @@ func (y *YumInstaller) GetVersion(name string) (string, error) {
 	}
 	return strings.TrimSpace(result.Stdout), nil
 }
+
+
+// Upgrade upgrades an installed package to the given version (or latest).
+func (y *YumInstaller) Upgrade(name, version string) error {
+	pkg := name
+	if !isLatest(version) {
+		pkg = fmt.Sprintf("%s-%s", name, version)
+	}
+	y.log.Info(fmt.Sprintf("upgrading %q via yum", pkg))
+	if _, err := y.exec.Run("sudo", "yum", "update", "-y", pkg); err != nil {
+		return fmt.Errorf("yum update %q failed: %w", pkg, err)
+	}
+	return nil
+}

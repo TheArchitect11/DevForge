@@ -1,6 +1,4 @@
-// Package security provides input validation and sanitization utilities
-// for DevForge to prevent injection attacks, directory traversal, and
-// other security issues.
+// Package security provides input validation and sanitization for DevForge.
 package security
 
 import (
@@ -11,12 +9,15 @@ import (
 	"strings"
 )
 
-// validNamePattern matches safe dependency/plugin names: alphanumeric,
-// hyphens, underscores, dots, and @ for version specifiers.
+// validNamePattern accepts dependency / plugin names.
+// Allows: alphanumeric, hyphens, underscores, dots, @, and / (for paths).
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@/-]*$`)
 
-// ValidateName checks that a name string (dependency, plugin, project)
-// contains only safe characters.
+// validProjectNamePattern is stricter — safe for use as a directory name.
+// Allows: alphanumeric, hyphens, underscores, dots. No slashes or @.
+var validProjectNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+// ValidateName checks a dependency or plugin name for unsafe characters.
 func ValidateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("name cannot be empty")
@@ -30,8 +31,30 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// ValidateURL checks that a URL string is well-formed and uses a safe
-// scheme (http or https).
+// ValidateProjectName checks a project name for safe use as a directory.
+// It is stricter than ValidateName: no slashes, no @ signs, max 100 chars,
+// and the name may not consist solely of dots.
+func ValidateProjectName(name string) error {
+	if name == "" {
+		return fmt.Errorf("project name cannot be empty")
+	}
+	if len(name) > 100 {
+		return fmt.Errorf("project name %q exceeds maximum length of 100 characters", name)
+	}
+	if !validProjectNamePattern.MatchString(name) {
+		return fmt.Errorf(
+			"project name %q contains invalid characters; use letters, digits, hyphens, underscores, or dots only",
+			name,
+		)
+	}
+	// Reject names that are purely dots (e.g. ".", "..").
+	if strings.Trim(name, ".") == "" {
+		return fmt.Errorf("project name %q is not a valid directory name", name)
+	}
+	return nil
+}
+
+// ValidateURL checks that a URL is well-formed and uses http or https.
 func ValidateURL(rawURL string) error {
 	if rawURL == "" {
 		return fmt.Errorf("URL cannot be empty")
@@ -43,7 +66,7 @@ func ValidateURL(rawURL string) error {
 	}
 
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("URL %q has unsupported scheme %q; only http and https are allowed", rawURL, parsed.Scheme)
+		return fmt.Errorf("URL %q uses unsupported scheme %q; only http and https are allowed", rawURL, parsed.Scheme)
 	}
 
 	if parsed.Host == "" {
@@ -53,9 +76,8 @@ func ValidateURL(rawURL string) error {
 	return nil
 }
 
-// ValidatePath checks a file or directory path for directory traversal
-// attempts. It ensures the resolved path stays within the expected base
-// directory.
+// ValidatePath checks a file or directory path for directory-traversal
+// attempts, ensuring the resolved path stays within basePath.
 func ValidatePath(basePath, targetPath string) error {
 	absBase, err := filepath.Abs(basePath)
 	if err != nil {
@@ -67,18 +89,13 @@ func ValidatePath(basePath, targetPath string) error {
 		return fmt.Errorf("failed to resolve target path %q: %w", targetPath, err)
 	}
 
-	// Ensure the target is within the base directory.
 	if !strings.HasPrefix(absTarget, absBase+string(filepath.Separator)) && absTarget != absBase {
 		return fmt.Errorf("path %q escapes base directory %q (directory traversal detected)", targetPath, basePath)
 	}
-
 	return nil
 }
 
-// SanitizeInput strips null bytes and trims whitespace from user input.
+// SanitizeInput strips null bytes and trims surrounding whitespace.
 func SanitizeInput(input string) string {
-	// Remove null bytes.
-	cleaned := strings.ReplaceAll(input, "\x00", "")
-	// Trim leading/trailing whitespace.
-	return strings.TrimSpace(cleaned)
+	return strings.TrimSpace(strings.ReplaceAll(input, "\x00", ""))
 }

@@ -99,3 +99,17 @@ func (c *Cache) Load() (*Registry, error) {
 	// Fallback for old format (or invalid format). Re-fetch.
 	return nil, fmt.Errorf("invalid or outdated cache format")
 }
+
+// Clear removes the local cache file. The next Fetch() call will pull
+// fresh data from the remote registry.
+func (c *Cache) Clear() error {
+	path, err := cachePath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to clear template cache: %w", err)
+	}
+	c.log.Info("template registry cache cleared")
+	return nil
+}

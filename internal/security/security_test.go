@@ -82,3 +82,65 @@ func TestSanitizeInput(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateProjectName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "simple", input: "myproject", wantErr: false},
+		{name: "with dash", input: "my-project", wantErr: false},
+		{name: "with underscore", input: "my_project", wantErr: false},
+		{name: "with dot", input: "project.v2", wantErr: false},
+		{name: "alphanumeric start", input: "2cool", wantErr: false},
+
+		// Must reject what ValidateName allows but is unsafe for directories.
+		{name: "slash", input: "my/project", wantErr: true},
+		{name: "at sign", input: "node@20", wantErr: true},
+		{name: "directory traversal", input: "../evil", wantErr: true},
+		{name: "just dots", input: "..", wantErr: true},
+		{name: "empty", input: "", wantErr: true},
+		{name: "too long", input: string(make([]byte, 101)), wantErr: true},
+		{name: "spaces", input: "my project", wantErr: true},
+		{name: "shell injection", input: "name;evil", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateProjectName(tt.input)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidateProjectName(%q) expected error, got nil", tt.input)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidateProjectName(%q) unexpected error: %v", tt.input, err)
+			}
+		})
+	}
+}
+
+func TestValidatePath(t *testing.T) {
+	tests := []struct {
+		name    string
+		base    string
+		target  string
+		wantErr bool
+	}{
+		{name: "same dir", base: "/tmp/base", target: "/tmp/base", wantErr: false},
+		{name: "child dir", base: "/tmp/base", target: "/tmp/base/child", wantErr: false},
+		{name: "escape", base: "/tmp/base", target: "/tmp/other", wantErr: true},
+		{name: "traversal", base: "/tmp/base", target: "/tmp/base/../other", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePath(tt.base, tt.target)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidatePath(%q, %q) expected error", tt.base, tt.target)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidatePath(%q, %q) unexpected error: %v", tt.base, tt.target, err)
+			}
+		})
+	}
+}

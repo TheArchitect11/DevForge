@@ -44,7 +44,7 @@ func New(log *logger.Logger, dryRun bool) *Executor {
 }
 
 // dangerousPattern matches characters commonly used in shell injection.
-var dangerousPattern = regexp.MustCompile(`[;&|` + "`" + `$(){}]`)
+var dangerousPattern = regexp.MustCompile(`[;&|` + "`" + `$(){}\\<>]`)
 
 // sanitize validates that a command argument does not contain shell
 // metacharacters that could lead to command injection.
@@ -110,6 +110,54 @@ func (e *Executor) Run(name string, args ...string) (*Result, error) {
 		"command": cmdStr,
 		"output":  result.Stdout,
 	})
+
+	return result, nil
+}
+
+// RunIn is like Run but executes the command with the given working directory.
+// Use this for commands that must run inside a specific folder (e.g. npm install
+// inside the newly scaffolded project).
+func (e *Executor) RunIn(dir, name string, args ...string) (*Result, error) {
+	for _, arg := range args {
+		if err := sanitize(arg); err != nil {
+			return nil, fmt.Errorf("command sanitization failed: %w", err)
+		}
+	}
+
+	cmdStr := name + " " + strings.Join(args, " ")
+	e.log.Debug("executing command", map[string]interface{}{
+		"command": cmdStr,
+		"dir":     dir,
+		"dryRun":  e.dryRun,
+	})
+
+	if e.dryRun {
+		e.log.Info(fmt.Sprintf("[dry-run] would execute in %s: %s", dir, cmdStr))
+		return &Result{Command: cmdStr, DryRun: true}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	result := &Result{
+		Command:  cmdStr,
+		Stdout:   strings.TrimSpace(stdout.String()),
+		Stderr:   strings.TrimSpace(stderr.String()),
+		ExitCode: 0,
+	}
+
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exitErr.ExitCode()
+		} else {
+			return result, fmt.Errorf("failed to execute %q in %s: %w", cmdStr, dir, err)
+		}
+		return result, fmt.Errorf("command %q exited with code %d: %s", cmdStr, result.ExitCode, result.Stderr)
+	}
 
 	return result, nil
 }

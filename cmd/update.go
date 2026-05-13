@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/chinmay/devforge/internal/logger"
 	"github.com/chinmay/devforge/internal/updater"
+	"github.com/chinmay/devforge/internal/ux"
 )
 
 var updateCmd = &cobra.Command{
@@ -15,8 +17,9 @@ var updateCmd = &cobra.Command{
 	Long: `Check the latest DevForge release on GitHub. If a newer version
 is available, download and install it automatically.
 
-The current binary is backed up before replacement, and rolled
-back if the update fails.`,
+The current binary is backed up before replacement and automatically
+restored if the update fails. The downloaded binary is verified against
+the SHA-256 checksums published with the release.`,
 	RunE: runUpdate,
 }
 
@@ -31,43 +34,54 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 	defer log.Close()
 
+	// ── Check for updates ──────────────────────────────────────────
+	spin := ux.NewSpinner("Checking for updates")
 	u := updater.New(Version, log)
 
 	result, err := u.Check()
 	if err != nil {
+		spin.Fail("Update check failed")
 		return fmt.Errorf("update check failed: %w", err)
 	}
+	spin.Stop("")
 
-	fmt.Printf("  Current version: %s\n", result.CurrentVersion)
-	fmt.Printf("  Latest version:  %s\n", result.LatestVersion)
+	// ── Version summary ────────────────────────────────────────────
+	ux.Header("DevForge Update")
+	fmt.Printf("  Current version : %s\n", result.CurrentVersion)
+	fmt.Printf("  Latest version  : %s\n", result.LatestVersion)
+	fmt.Println()
 
 	if !result.UpdateAvailable {
-		fmt.Println("\n  ✅ You are running the latest version!")
+		ux.Success("Already on the latest version (%s)", result.CurrentVersion)
 		return nil
 	}
 
-	fmt.Println()
+	// ── Changelog ─────────────────────────────────────────────────
 	if result.Changelog != "" {
-		fmt.Println("  Changelog:")
-		fmt.Println("  ──────────")
-		fmt.Println(result.Changelog)
+		ux.InfoMsg("What's new in v%s:", result.LatestVersion)
+		for _, line := range strings.Split(result.Changelog, "\n") {
+			fmt.Printf("  %s\n", line)
+		}
 		fmt.Println()
 	}
 
 	if dryRun {
-		fmt.Println("  [dry-run] Would download and install the update.")
+		ux.InfoMsg("[dry-run] Would download and install v%s.", result.LatestVersion)
 		return nil
 	}
 
 	if result.AssetURL == "" {
-		return fmt.Errorf("no binary available for your platform; please update manually")
+		return fmt.Errorf("no pre-built binary for this platform — visit https://github.com/ChinmayyK/DevForge/releases")
 	}
 
-	fmt.Println("  ⟳ Downloading update...")
+	// ── Download & install ─────────────────────────────────────────
+	dlSpin := ux.NewSpinner(fmt.Sprintf("Downloading v%s", result.LatestVersion))
+
 	if err := u.Update(result); err != nil {
-		return fmt.Errorf("update failed: %w", err)
+		dlSpin.Fail(fmt.Sprintf("Update failed: %v", err))
+		return err
 	}
 
-	fmt.Printf("\n  ✅ Updated to v%s. Restart DevForge to use the new version.\n", result.LatestVersion)
+	dlSpin.Stop(fmt.Sprintf("Updated to v%s — restart DevForge to use the new version", result.LatestVersion))
 	return nil
 }

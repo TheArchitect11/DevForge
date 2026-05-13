@@ -1,5 +1,6 @@
-// Package envgen generates .env files from .env.template files by
-// prompting the user for values.
+// Package envgen generates .env files from .env.template files.
+// It uses the same huh TUI as the wizard so the prompting style is
+// consistent throughout the DevForge experience.
 package envgen
 
 import (
@@ -9,37 +10,33 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/huh"
+
 	"github.com/chinmay/devforge/internal/logger"
 	"github.com/chinmay/devforge/internal/rollback"
+	"github.com/chinmay/devforge/internal/ux"
 )
 
-// Generator handles .env file creation from templates.
+// Generator handles .env file creation from .env.template files.
 type Generator struct {
 	log    *logger.Logger
 	rb     *rollback.Manager
 	dryRun bool
-	reader *bufio.Reader
 }
 
-// NewGenerator creates a Generator with the given logger, rollback
-// manager, and stdin reader for user prompts.
+// NewGenerator creates a Generator.
 func NewGenerator(log *logger.Logger, rb *rollback.Manager, dryRun bool) *Generator {
-	return &Generator{
-		log:    log,
-		rb:     rb,
-		dryRun: dryRun,
-		reader: bufio.NewReader(os.Stdin),
-	}
+	return &Generator{log: log, rb: rb, dryRun: dryRun}
 }
 
-// Generate reads the .env.template file in projectDir, prompts the
-// user for each key's value, and writes a .env file. It will not
-// overwrite an existing .env file.
+// Generate reads projectDir/.env.template, prompts the user for each
+// key using an interactive form, then writes projectDir/.env.
+// If no .env.template exists the function returns nil silently.
+// An existing .env is never overwritten.
 func (g *Generator) Generate(projectDir string) error {
 	templatePath := filepath.Join(projectDir, ".env.template")
 	envPath := filepath.Join(projectDir, ".env")
 
-	// Check if .env.template exists.
 	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
 		g.log.Info("no .env.template found, skipping env generation")
 		return nil
@@ -47,52 +44,121 @@ func (g *Generator) Generate(projectDir string) error {
 		return fmt.Errorf("failed to check for .env.template: %w", err)
 	}
 
-	// Never overwrite an existing .env file.
 	if _, err := os.Stat(envPath); err == nil {
-		g.log.Warn(".env file already exists, skipping generation to avoid overwriting")
+		g.log.Warn(".env already exists — skipping to avoid overwrite")
+		ux.Warning(".env already exists in %s — skipping generation.", projectDir)
 		return nil
 	}
 
-	// Parse the template file to extract keys and optional default values.
 	keys, defaults, err := g.parseTemplate(templatePath)
 	if err != nil {
 		return err
 	}
-
-	if g.dryRun {
-		g.log.Info(fmt.Sprintf("[dry-run] would generate .env with %d key(s): %s", len(keys), strings.Join(keys, ", ")))
+	if len(keys) == 0 {
+		g.log.Info(".env.template is empty, skipping")
 		return nil
 	}
 
-	g.log.Info(fmt.Sprintf("generating .env file with %d key(s)...", len(keys)))
-
-	// Prompt user for each key.
-	values := make(map[string]string, len(keys))
-	for _, key := range keys {
-		defaultVal := defaults[key]
-		values[key], err = g.promptForValue(key, defaultVal)
-		if err != nil {
-			return fmt.Errorf("failed to read value for %q: %w", key, err)
-		}
+	if g.dryRun {
+		g.log.Info(fmt.Sprintf("[dry-run] would prompt for %d .env key(s): %s",
+			len(keys), strings.Join(keys, ", ")))
+		return nil
 	}
 
-	// Write the .env file.
+	values, err := g.promptAllKeys(keys, defaults)
+	if err != nil {
+		return fmt.Errorf(".env setup cancelled or failed: %w", err)
+	}
+
 	if err := g.writeEnvFile(envPath, keys, values); err != nil {
 		return err
 	}
 
-	// Register rollback: remove the generated .env file.
 	g.rb.Register("remove generated .env file", func() error {
 		return os.Remove(envPath)
 	})
 
-	g.log.Info(fmt.Sprintf(".env file generated at %s", envPath))
+	ux.Success(".env written to %s", envPath)
+	g.log.Info(fmt.Sprintf(".env generated at %s", envPath))
 	return nil
 }
 
-// parseTemplate reads a .env.template file and extracts KEY=DEFAULT
-// pairs. Lines starting with # are treated as comments. Empty lines
-// are skipped.
+// promptAllKeys shows all keys in a single huh form so the user can
+// fill them in together, consistent with the wizard's batch style.
+// Falls back to line-by-line stdin prompts when the terminal is not
+// interactive (e.g. pipes, CI).
+func (g *Generator) promptAllKeys(keys []string, defaults map[string]string) (map[string]string, error) {
+	valuePtrs := make([]string, len(keys))
+	for i, k := range keys {
+		valuePtrs[i] = defaults[k] // pre-fill with template default
+	}
+
+	fields := make([]huh.Field, len(keys))
+	for i, key := range keys {
+		i, key := i, key
+		defVal := defaults[key]
+		desc := ""
+		if defVal != "" {
+			desc = fmt.Sprintf("default: %s", defVal)
+		}
+		fields[i] = huh.NewInput().
+			Title(key).
+			Description(desc).
+			Placeholder(defVal).
+			Value(&valuePtrs[i])
+	}
+
+	err := huh.NewForm(huh.NewGroup(fields...)).
+		WithTheme(huh.ThemeBase()).
+		Run()
+
+	if err != nil {
+		// huh may fail in non-interactive environments; fall back to stdin.
+		g.log.Warn(fmt.Sprintf("TUI unavailable (%v) — falling back to line prompts", err))
+		return g.promptFallback(keys, defaults)
+	}
+
+	values := make(map[string]string, len(keys))
+	for i, key := range keys {
+		v := strings.TrimSpace(valuePtrs[i])
+		if v == "" {
+			v = defaults[key]
+		}
+		values[key] = v
+	}
+	return values, nil
+}
+
+// promptFallback reads key values line-by-line from stdin.
+// Used as a safety net in non-TTY environments.
+func (g *Generator) promptFallback(keys []string, defaults map[string]string) (map[string]string, error) {
+	scanner := bufio.NewScanner(os.Stdin)
+	values := make(map[string]string, len(keys))
+
+	fmt.Println("\n  Configure .env values (press Enter to accept default):")
+	for _, key := range keys {
+		def := defaults[key]
+		if def != "" {
+			fmt.Printf("  %s [%s]: ", key, def)
+		} else {
+			fmt.Printf("  %s: ", key)
+		}
+
+		if scanner.Scan() {
+			v := strings.TrimSpace(scanner.Text())
+			if v == "" {
+				v = def
+			}
+			values[key] = v
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("stdin read error: %w", err)
+	}
+	return values, nil
+}
+
+// parseTemplate reads KEY=DEFAULT pairs from a .env.template file.
 func (g *Generator) parseTemplate(path string) ([]string, map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -106,55 +172,26 @@ func (g *Generator) parseTemplate(path string) ([]string, map[string]string, err
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-
-		// Skip empty lines and comments.
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-
 		parts := strings.SplitN(line, "=", 2)
 		key := strings.TrimSpace(parts[0])
 		if key == "" {
 			continue
 		}
-
 		keys = append(keys, key)
 		if len(parts) == 2 {
 			defaults[key] = strings.TrimSpace(parts[1])
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
 		return nil, nil, fmt.Errorf("error reading .env.template: %w", err)
 	}
-
 	return keys, defaults, nil
 }
 
-// promptForValue asks the user to provide a value for a configuration
-// key. If a default is available, it is shown and used when the user
-// presses Enter without typing anything.
-func (g *Generator) promptForValue(key, defaultVal string) (string, error) {
-	if defaultVal != "" {
-		fmt.Printf("  %s [%s]: ", key, defaultVal)
-	} else {
-		fmt.Printf("  %s: ", key)
-	}
-
-	input, err := g.reader.ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-
-	value := strings.TrimSpace(input)
-	if value == "" && defaultVal != "" {
-		return defaultVal, nil
-	}
-	return value, nil
-}
-
-// writeEnvFile writes the key=value pairs to a .env file preserving
-// the original key order from the template.
+// writeEnvFile writes KEY=VALUE lines to path, preserving key order.
 func (g *Generator) writeEnvFile(path string, keys []string, values map[string]string) error {
 	file, err := os.Create(path)
 	if err != nil {
@@ -162,11 +199,12 @@ func (g *Generator) writeEnvFile(path string, keys []string, values map[string]s
 	}
 	defer file.Close()
 
-	writer := bufio.NewWriter(file)
+	w := bufio.NewWriter(file)
+	fmt.Fprintln(w, "# Generated by DevForge — do not commit this file")
 	for _, key := range keys {
-		if _, err := fmt.Fprintf(writer, "%s=%s\n", key, values[key]); err != nil {
+		if _, err := fmt.Fprintf(w, "%s=%s\n", key, values[key]); err != nil {
 			return fmt.Errorf("failed to write key %q to .env: %w", key, err)
 		}
 	}
-	return writer.Flush()
+	return w.Flush()
 }
